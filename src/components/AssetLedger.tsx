@@ -33,6 +33,12 @@ const spin = keyframes`
   to { transform: rotate(360deg); }
 `;
 
+const skeletonPulse = keyframes`
+  0% { opacity: 0.7; }
+  50% { opacity: 0.3; }
+  100% { opacity: 0.7; }
+`;
+
 // --- Styled Components ---
 const Container = styled.div`
   display: flex;
@@ -50,7 +56,7 @@ const Header = styled.header`
   align-items: center;
   justify-content: space-between;
   padding: 1rem 1.5rem;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--card-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--card-border);
@@ -66,7 +72,7 @@ const LogoIcon = styled.div`
   background: var(--primary);
   padding: 0.5rem;
   border-radius: 0.75rem;
-  box-shadow: 0 0 20px rgba(99, 102, 241, 0.4);
+  box-shadow: 0 0 20px var(--primary-glow);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -113,7 +119,7 @@ const SearchInput = styled.input`
   padding: 0.625rem 1rem 0.625rem 2.5rem;
   border-radius: 0.75rem;
   font-size: 0.875rem;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--glass);
   border: 1px solid var(--card-border);
   color: var(--foreground);
   outline: none;
@@ -170,8 +176,8 @@ const GlassCard = styled.div<{ $delay?: string }>`
 `;
 
 const StatIconBox = styled.div`
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--glass);
+  border: 1px solid var(--card-border);
   padding: 0.625rem;
   border-radius: 0.75rem;
   display: flex;
@@ -180,7 +186,7 @@ const StatIconBox = styled.div`
   transition: all 0.3s ease;
 
   ${GlassCard}:hover & {
-    background: rgba(99, 102, 241, 0.1);
+    background: var(--primary-glow);
     border-color: rgba(99, 102, 241, 0.2);
   }
 `;
@@ -193,7 +199,7 @@ const LedgerSection = styled(GlassCard)`
 
 const TableContainer = styled.div`
   overflow: auto;
-  background: rgba(0, 0, 0, 0.2);
+  background: transparent;
   flex: 1;
 `;
 
@@ -212,7 +218,7 @@ const TableHead = styled.thead`
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--card-bg);
   backdrop-filter: blur(12px);
 `;
 
@@ -224,14 +230,14 @@ const Th = styled.th`
 
 const Tr = styled.tr`
   transition: background-color 0.2s ease;
+  border-bottom: 1px solid var(--card-border);
   &:hover {
-    background-color: rgba(255, 255, 255, 0.02);
+    background-color: var(--glass);
   }
 `;
 
 const Td = styled.td`
   padding: 1rem 1.5rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 `;
 
 const ChangeBadge = styled.span<{ $negative?: boolean }>`
@@ -301,6 +307,14 @@ const LiveFeedInfo = styled.div`
 const SpinnerWrapper = styled.div`
   display: inline-flex;
   animation: ${spin} 1s linear infinite;
+`;
+
+const SkeletonBox = styled.div<{ $width?: string, $height?: string, $rounded?: string }>`
+  width: ${props => props.$width || '100%'};
+  height: ${props => props.$height || '1rem'};
+  border-radius: ${props => props.$rounded || '0.5rem'};
+  background: var(--card-border);
+  animation: ${skeletonPulse} 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 `;
 
 // --- Mock Data Generator ---
@@ -403,7 +417,60 @@ export default function AssetLedger() {
     }, 400);
   }, []);
 
-  if (!isMounted) return null;
+  if (!isMounted) {
+    return (
+      <Container>
+        <Header>
+          <LogoContainer>
+            <LogoIcon>
+              <Globe className="w-6 h-6 text-white" size={24} color="white" />
+            </LogoIcon>
+            <Title>
+              Asset<span style={{ color: 'var(--primary)' }}>Ledger</span>
+            </Title>
+          </LogoContainer>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <SkeletonBox $width="8rem" $height="1rem" $rounded="0.25rem" className="hidden sm:block" />
+            <div style={{ width: '2.5rem', height: '2.5rem', borderRadius: '50%', background: 'var(--card-border)' }}></div>
+          </div>
+        </Header>
+        <MainContent>
+           <StatsGrid>
+              <GlassCard style={{ height: '7rem', justifyContent: 'space-between' }}>
+                 <SkeletonBox $width="2rem" $height="2rem" $rounded="0.5rem" />
+                 <SkeletonBox $width="60%" $height="1.5rem" />
+              </GlassCard>
+              <GlassCard style={{ height: '7rem', justifyContent: 'space-between' }}>
+                 <SkeletonBox $width="2rem" $height="2rem" $rounded="0.5rem" />
+                 <SkeletonBox $width="60%" $height="1.5rem" />
+              </GlassCard>
+              <GlassCard style={{ height: '7rem', justifyContent: 'space-between' }}>
+                 <SkeletonBox $width="2rem" $height="2rem" $rounded="0.5rem" />
+                 <SkeletonBox $width="60%" $height="1.5rem" />
+              </GlassCard>
+              <GlassCard style={{ height: '7rem', justifyContent: 'space-between' }}>
+                 <SkeletonBox $width="2rem" $height="2rem" $rounded="0.5rem" />
+                 <SkeletonBox $width="60%" $height="1.5rem" />
+              </GlassCard>
+           </StatsGrid>
+           <LedgerSection style={{ minHeight: '30rem', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                 <SkeletonBox $width="12rem" $height="2rem" />
+                 <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <SkeletonBox $width="2.5rem" $height="2.5rem" />
+                    <SkeletonBox $width="2.5rem" $height="2.5rem" />
+                 </div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
+                 {Array.from({length: 6}).map((_, i) => (
+                    <SkeletonBox key={i} $width="100%" $height="3.5rem" $rounded="0.5rem" />
+                 ))}
+              </div>
+           </LedgerSection>
+        </MainContent>
+      </Container>
+    );
+  }
 
   return (
     <Container>
@@ -440,7 +507,7 @@ export default function AssetLedger() {
               <span style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}>CONNECTED</span>
             </div>
           </LiveFeedInfo>
-          <div style={{ width: '2.5rem', height: '2.5rem', borderRadius: '50%', background: 'linear-gradient(135deg, #6366f1, #a855f7)', border: '1px solid rgba(255,255,255,0.1)' }}></div>
+          <div style={{ width: '2.5rem', height: '2.5rem', borderRadius: '50%', background: 'linear-gradient(135deg, #6366f1, #a855f7)', border: '1px solid var(--card-border)' }}></div>
         </div>
       </Header>
 
@@ -459,7 +526,7 @@ export default function AssetLedger() {
                 </div>
                 <div>
                   <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.5rem', display: 'block', textTransform: 'uppercase' }}>Region</label>
-                  <select style={{ width: '100%', padding: '0.75rem', borderRadius: '0.5rem', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--card-border)', color: 'inherit' }}>
+                  <select style={{ width: '100%', padding: '0.75rem', borderRadius: '0.5rem', background: 'var(--glass)', border: '1px solid var(--card-border)', color: 'inherit' }}>
                     <option>Global</option>
                     <option>APAC</option>
                     <option>EMEA</option>
@@ -488,15 +555,15 @@ export default function AssetLedger() {
             <div>
               <h2 style={{ fontSize: '1.125rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 Live Asset Log
-                <span style={{ fontSize: '0.75rem', fontWeight: 400, background: 'rgba(255,255,255,0.05)', padding: '0.25rem 0.5rem', borderRadius: '9999px', color: 'var(--text-muted)' }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: 400, background: 'var(--glass)', padding: '0.25rem 0.5rem', borderRadius: '9999px', color: 'var(--text-muted)' }}>
                   {filteredData.length.toLocaleString()} records
                 </span>
               </h2>
               <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>Global ledger sync at {new Date().toLocaleTimeString()}</p>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button style={{ padding: '0.625rem', borderRadius: '0.5rem', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--card-border)', color: 'inherit' }}><Filter size={16} /></button>
-              <button style={{ padding: '0.625rem', borderRadius: '0.5rem', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--card-border)', color: 'inherit' }}><ArrowUpRight size={16} /></button>
+              <button style={{ padding: '0.625rem', borderRadius: '0.5rem', background: 'var(--glass)', border: '1px solid var(--card-border)', color: 'inherit' }}><Filter size={16} /></button>
+              <button style={{ padding: '0.625rem', borderRadius: '0.5rem', background: 'var(--glass)', border: '1px solid var(--card-border)', color: 'inherit' }}><ArrowUpRight size={16} /></button>
             </div>
           </div>
 
@@ -518,7 +585,7 @@ export default function AssetLedger() {
                     <Td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.875rem', color: 'rgba(99, 102, 241, 0.8)' }}>{item.id}</Td>
                     <Td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        <div style={{ width: '2rem', height: '2rem', borderRadius: '0.5rem', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.75rem' }}>
+                        <div style={{ width: '2rem', height: '2rem', borderRadius: '0.5rem', background: 'var(--glass)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.75rem', border: '1px solid var(--card-border)' }}>
                           {item.symbol}
                         </div>
                         <span style={{ fontWeight: 500 }}>{item.name}</span>
@@ -533,7 +600,7 @@ export default function AssetLedger() {
                     </Td>
                     <Td style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>{item.region}</Td>
                     <Td>
-                      <button style={{ background: 'transparent', color: 'var(--text-muted)' }}><ChevronRight size={16} /></button>
+                      <button style={{ background: 'transparent', color: 'var(--text-muted)', border: 'none', cursor: 'pointer' }}><ChevronRight size={16} /></button>
                     </Td>
                   </Tr>
                 ))}
