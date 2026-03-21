@@ -1,15 +1,15 @@
 "use client";
 
-import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import React, { useState, useMemo, useEffect, useCallback, useRef, useDeferredValue } from "react";
 import styled, { keyframes } from "styled-components";
-import { 
-  Search, 
-  Filter, 
-  ArrowUpRight, 
-  ArrowDownRight, 
-  Activity, 
-  Layers, 
-  Globe, 
+import {
+  Search,
+  Filter,
+  ArrowUpRight,
+  ArrowDownRight,
+  Activity,
+  Layers,
+  Globe,
   ChevronRight,
   Menu,
   X,
@@ -53,19 +53,25 @@ const Header = styled.header`
   top: 0;
   z-index: 50;
   display: flex;
+  flex-wrap: wrap; 
   align-items: center;
   justify-content: space-between;
-  padding: 1rem 1.5rem;
+  padding: 0.5rem 1rem;
   background: var(--card-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--card-border);
+
+  @media (min-width: 768px) {
+    padding: 1rem 1.5rem;
+  }
 `;
 
 const LogoContainer = styled.div`
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  order: 1;
 `;
 
 const LogoIcon = styled.div`
@@ -89,14 +95,24 @@ const Title = styled.h1`
 `;
 
 const SearchContainer = styled.div`
-  display: none;
+  display: flex;
   flex: 1;
-  max-width: 36rem;
-  margin: 0 2rem;
+  min-width: 100%;
+  order: 3;
+  margin-top: 0.75rem;
   position: relative;
 
   @media (min-width: 768px) {
-    display: block;
+    min-width: 0; // prevent overflow
+    max-width: 30rem;
+    order: 2;
+    margin: 0 1rem;
+    margin-top: 0;
+  }
+  
+  @media (min-width: 1024px) {
+    max-width: 36rem;
+    margin: 0 2rem;
   }
 `;
 
@@ -133,14 +149,15 @@ const SearchInput = styled.input`
 const MainContent = styled.main`
   display: flex;
   flex-direction: column;
-  padding: 1rem;
-  gap: 1.5rem;
+  padding: 0.5rem 1rem;
+  gap: 1rem;
   max-width: 80rem;
   margin: 0 auto;
   width: 100%;
 
   @media (min-width: 768px) {
     padding: 1.5rem;
+    gap: 1.5rem;
   }
 `;
 
@@ -274,16 +291,7 @@ const SidebarCard = styled(GlassCard)`
   padding: 1.5rem;
 `;
 
-const MobileMenuButton = styled.button`
-  padding: 0.5rem;
-  color: var(--text-muted);
-  background: transparent;
-  display: block;
 
-  @media (min-width: 768px) {
-    display: none;
-  }
-`;
 
 const PulseDot = styled.span`
   width: 0.5rem;
@@ -294,13 +302,13 @@ const PulseDot = styled.span`
 `;
 
 const LiveFeedInfo = styled.div`
-  display: none;
+  display: flex;
   flex-direction: column;
   align-items: flex-end;
-  margin-right: 0.5rem;
+  order: 2;
 
-  @media (min-width: 640px) {
-    display: flex;
+  @media (min-width: 768px) {
+    order: 3;
   }
 `;
 
@@ -317,19 +325,15 @@ const SkeletonBox = styled.div<{ $width?: string, $height?: string, $rounded?: s
   animation: ${skeletonPulse} 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 `;
 
-// --- Mock Data Generator ---
-// We simulate a massive dataset of 100,000 records
-const GENERATED_RECORDS = 100000;
-const rawData = Array.from({ length: GENERATED_RECORDS }).map((_, i) => ({
-  id: `ASSET-${i + 1000}`,
-  name: ["Bitcoin", "Ethereum", "Solana", "Polkadot", "Avalanche", "Chainlink"][i % 6] + ` v${i % 10}`,
-  symbol: ["BTC", "ETH", "SOL", "DOT", "AVAX", "LINK"][i % 6],
-  value: (Math.random() * 50000 + 1000).toFixed(2),
-  change: (Math.random() * 10 - 5).toFixed(2),
-  volume: (Math.random() * 1000000000).toFixed(0),
-  timestamp: new Date().toLocaleTimeString(),
-  region: ["Global", "APAC", "EMEA", "AMER"][i % 4],
-}));
+interface AssetData {
+  id: string;
+  name: string;
+  symbol: string;
+  value: string;
+  change: string;
+  volume: string;
+  region: string;
+}
 
 interface StatCardProps {
   icon: React.ReactNode;
@@ -360,28 +364,96 @@ function StatCard({ icon, label, value, change }: StatCardProps) {
 
 export default function AssetLedger() {
   const [isMounted, setIsMounted] = useState(false);
+  const [rawData, setRawData] = useState<AssetData[]>([]);
+  const [isFetching, setIsFetching] = useState(true);
+
   const [search, setSearch] = useState("");
+  // useDeferredValue keeps the UI responsive while typing, only applying the filter once typing naturally pauses
+  const deferredSearch = useDeferredValue(search);
+
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(50);
   const [isLoading, setIsLoading] = useState(false);
-  
+
+  const [isOnline, setIsOnline] = useState(true);
+  const [stats, setStats] = useState({ volume: "$0", latency: "0ms" });
+
   useEffect(() => {
     setIsMounted(true);
+    if (typeof window !== 'undefined') {
+      setIsOnline(navigator.onLine);
+      const handleOnline = () => setIsOnline(true);
+      const handleOffline = () => setIsOnline(false);
+      window.addEventListener('online', handleOnline);
+      window.addEventListener('offline', handleOffline);
+      return () => {
+        window.removeEventListener('online', handleOnline);
+        window.removeEventListener('offline', handleOffline);
+      };
+    }
   }, []);
-  
+
+  useEffect(() => {
+    if (!isMounted) return;
+
+    const startTime = performance.now();
+    // Fetch Binance 24hr Ticker API
+    fetch("https://api.binance.com/api/v3/ticker/24hr")
+      .then(res => res.json())
+      .then((data: any[]) => {
+        const endTime = performance.now();
+        const fetchLatency = Math.round(endTime - startTime);
+        let totalVolume = 0;
+
+        const formatted = data.map((item) => {
+          totalVolume += Number(item.quoteVolume || 0);
+
+          let baseAsset = item.symbol;
+          const quotes = ["USDT", "BUSD", "USDC", "TRY", "EUR", "BTC", "ETH", "BNB"];
+          for (const quote of quotes) {
+            if (item.symbol.endsWith(quote)) {
+              baseAsset = item.symbol.substring(0, item.symbol.length - quote.length);
+              break;
+            }
+          }
+
+          return {
+            id: item.symbol,
+            name: item.symbol,
+            symbol: baseAsset,
+            value: Number(item.lastPrice).toFixed(4),
+            change: Number(item.priceChangePercent).toFixed(2),
+            volume: Number(item.volume).toFixed(0),
+            region: ["Global", "APAC", "EMEA", "AMER"][Math.floor(Math.random() * 4)],
+          };
+        });
+
+        let volumeStr = totalVolume > 1e9 ? `$${(totalVolume / 1e9).toFixed(2)}B` : `$${(totalVolume / 1e6).toFixed(2)}M`;
+        setStats({ volume: volumeStr, latency: `${fetchLatency}ms` });
+
+        formatted.sort((a, b) => Number(b.volume) - Number(a.volume));
+
+        setRawData(formatted);
+        setIsFetching(false);
+      })
+      .catch(err => {
+        console.error("Failed to fetch Binance API", err);
+        setIsFetching(false);
+      });
+  }, [isMounted]);
+
   // High-Performance Filtering Strategy:
-  // We use useMemo to avoid re-calculating the filter on every re-render.
-  // For even larger datasets, we would move this to a Web Worker or handle it on the Server.
+  // We use useMemo + useDeferredValue to avoid freezing the UI on every keystroke
   const filteredData = useMemo(() => {
-    if (!search) return rawData;
-    const lowerSearch = search.toLowerCase();
+    if (!deferredSearch) return rawData;
+    const lowerSearch = deferredSearch.toLowerCase();
     return rawData.filter(
-      item => 
-        item.name.toLowerCase().includes(lowerSearch) || 
+      item =>
+        item.name.toLowerCase().includes(lowerSearch) ||
         item.id.toLowerCase().includes(lowerSearch) ||
         item.symbol.toLowerCase().includes(lowerSearch)
     );
-  }, [search]);
+  }, [deferredSearch, rawData]);
 
   const displayedData = useMemo(() => {
     return filteredData.slice(0, visibleCount);
@@ -417,7 +489,7 @@ export default function AssetLedger() {
     }, 400);
   }, []);
 
-  if (!isMounted) {
+  if (!isMounted || isFetching) {
     return (
       <Container>
         <Header>
@@ -429,44 +501,43 @@ export default function AssetLedger() {
               Asset<span style={{ color: 'var(--primary)' }}>Ledger</span>
             </Title>
           </LogoContainer>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <SkeletonBox $width="8rem" $height="1rem" $rounded="0.25rem" className="hidden sm:block" />
-            <div style={{ width: '2.5rem', height: '2.5rem', borderRadius: '50%', background: 'var(--card-border)' }}></div>
-          </div>
+          <LiveFeedInfo>
+            <SkeletonBox $width="8rem" $height="1rem" $rounded="0.25rem" />
+          </LiveFeedInfo>
         </Header>
         <MainContent>
-           <StatsGrid>
-              <GlassCard style={{ height: '7rem', justifyContent: 'space-between' }}>
-                 <SkeletonBox $width="2rem" $height="2rem" $rounded="0.5rem" />
-                 <SkeletonBox $width="60%" $height="1.5rem" />
-              </GlassCard>
-              <GlassCard style={{ height: '7rem', justifyContent: 'space-between' }}>
-                 <SkeletonBox $width="2rem" $height="2rem" $rounded="0.5rem" />
-                 <SkeletonBox $width="60%" $height="1.5rem" />
-              </GlassCard>
-              <GlassCard style={{ height: '7rem', justifyContent: 'space-between' }}>
-                 <SkeletonBox $width="2rem" $height="2rem" $rounded="0.5rem" />
-                 <SkeletonBox $width="60%" $height="1.5rem" />
-              </GlassCard>
-              <GlassCard style={{ height: '7rem', justifyContent: 'space-between' }}>
-                 <SkeletonBox $width="2rem" $height="2rem" $rounded="0.5rem" />
-                 <SkeletonBox $width="60%" $height="1.5rem" />
-              </GlassCard>
-           </StatsGrid>
-           <LedgerSection style={{ minHeight: '30rem', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                 <SkeletonBox $width="12rem" $height="2rem" />
-                 <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <SkeletonBox $width="2.5rem" $height="2.5rem" />
-                    <SkeletonBox $width="2.5rem" $height="2.5rem" />
-                 </div>
+          <StatsGrid>
+            <GlassCard style={{ height: '7rem', justifyContent: 'space-between' }}>
+              <SkeletonBox $width="2rem" $height="2rem" $rounded="0.5rem" />
+              <SkeletonBox $width="60%" $height="1.5rem" />
+            </GlassCard>
+            <GlassCard style={{ height: '7rem', justifyContent: 'space-between' }}>
+              <SkeletonBox $width="2rem" $height="2rem" $rounded="0.5rem" />
+              <SkeletonBox $width="60%" $height="1.5rem" />
+            </GlassCard>
+            <GlassCard style={{ height: '7rem', justifyContent: 'space-between' }}>
+              <SkeletonBox $width="2rem" $height="2rem" $rounded="0.5rem" />
+              <SkeletonBox $width="60%" $height="1.5rem" />
+            </GlassCard>
+            <GlassCard style={{ height: '7rem', justifyContent: 'space-between' }}>
+              <SkeletonBox $width="2rem" $height="2rem" $rounded="0.5rem" />
+              <SkeletonBox $width="60%" $height="1.5rem" />
+            </GlassCard>
+          </StatsGrid>
+          <LedgerSection style={{ minHeight: '30rem', padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <SkeletonBox $width="12rem" $height="2rem" />
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <SkeletonBox $width="2.5rem" $height="2.5rem" />
+                <SkeletonBox $width="2.5rem" $height="2.5rem" />
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
-                 {Array.from({length: 6}).map((_, i) => (
-                    <SkeletonBox key={i} $width="100%" $height="3.5rem" $rounded="0.5rem" />
-                 ))}
-              </div>
-           </LedgerSection>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
+              {Array.from({ length: 6 }).map((_, i) => (
+                <SkeletonBox key={i} $width="100%" $height="3.5rem" $rounded="0.5rem" />
+              ))}
+            </div>
+          </LedgerSection>
         </MainContent>
       </Container>
     );
@@ -488,27 +559,30 @@ export default function AssetLedger() {
           <SearchIconWrapper>
             <Search size={16} />
           </SearchIconWrapper>
-          <SearchInput 
-            type="text" 
-            placeholder="Search 1,000,000+ records..." 
+          <SearchInput
+            type="text"
+            placeholder="Search thousands of live pairs..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </SearchContainer>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <MobileMenuButton onClick={() => setIsSidebarOpen(true)}>
-            <Menu size={24} />
-          </MobileMenuButton>
-          <LiveFeedInfo>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Live Feed</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-              <PulseDot />
-              <span style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}>CONNECTED</span>
-            </div>
-          </LiveFeedInfo>
-          <div style={{ width: '2.5rem', height: '2.5rem', borderRadius: '50%', background: 'linear-gradient(135deg, #6366f1, #a855f7)', border: '1px solid var(--card-border)' }}></div>
-        </div>
+        <LiveFeedInfo>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Live Feed</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+            {isOnline ? (
+              <>
+                <PulseDot />
+                <span style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}>CONNECTED</span>
+              </>
+            ) : (
+              <>
+                <span style={{ width: '0.5rem', height: '0.5rem', borderRadius: '50%', backgroundColor: '#ef4444' }}></span>
+                <span style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: '#ef4444' }}>OFFLINE</span>
+              </>
+            )}
+          </div>
+        </LiveFeedInfo>
       </Header>
 
       <MainContent>
@@ -517,7 +591,7 @@ export default function AssetLedger() {
             <SidebarCard onClick={(e) => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Advanced Filters</h2>
-                <button onClick={() => setIsSidebarOpen(false)} style={{ background: 'transparent', color: 'inherit' }}><X /></button>
+                <button onClick={() => setIsSidebarOpen(false)} style={{ background: 'transparent', color: 'inherit', border: 'none', cursor: 'pointer' }}><X /></button>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 <div>
@@ -532,8 +606,8 @@ export default function AssetLedger() {
                     <option>EMEA</option>
                   </select>
                 </div>
-                <button 
-                  style={{ width: '100%', padding: '1rem', background: 'var(--primary)', color: 'white', borderRadius: '0.75rem', marginTop: '1.5rem', fontWeight: 700 }}
+                <button
+                  style={{ width: '100%', padding: '1rem', background: 'var(--primary)', color: 'white', borderRadius: '0.75rem', marginTop: '1.5rem', fontWeight: 700, border: 'none', cursor: 'pointer' }}
                   onClick={() => setIsSidebarOpen(false)}
                 >
                   Apply Filters
@@ -544,10 +618,10 @@ export default function AssetLedger() {
         )}
 
         <StatsGrid>
-          <StatCard icon={<Activity size={20} color="#34d399" />} label="Total Volume" value="$4.2T" change="+12.4%" />
-          <StatCard icon={<Layers size={20} color="#60a5fa" />} label="Assets Linked" value="1,042,391" change="+201" />
-          <StatCard icon={<ArrowUpRight size={20} color="#6366f1" />} label="Avg. Latency" value="14ms" change="-2ms" />
-          <StatCard icon={<RefreshCw size={20} color="#fb7185" />} label="Nodes Sync" value="99.99%" change="Live" />
+          <StatCard icon={<Activity size={20} color="#34d399" />} label="Total Volume" value={stats.volume} change="+12.4%" />
+          <StatCard icon={<Layers size={20} color="#60a5fa" />} label="Assets Linked" value={rawData.length.toLocaleString()} change="+201" />
+          <StatCard icon={<ArrowUpRight size={20} color="#6366f1" />} label="Avg. Latency" value={stats.latency} change="-2ms" />
+          <StatCard icon={<RefreshCw size={20} color={isOnline ? "#fb7185" : "#64748b"} />} label="Nodes Sync" value={isOnline ? "99.99%" : "0.00%"} change={isOnline ? "Live" : "Halted"} />
         </StatsGrid>
 
         <LedgerSection $delay="0.2s">
@@ -562,8 +636,8 @@ export default function AssetLedger() {
               <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>Global ledger sync at {new Date().toLocaleTimeString()}</p>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button style={{ padding: '0.625rem', borderRadius: '0.5rem', background: 'var(--glass)', border: '1px solid var(--card-border)', color: 'inherit' }}><Filter size={16} /></button>
-              <button style={{ padding: '0.625rem', borderRadius: '0.5rem', background: 'var(--glass)', border: '1px solid var(--card-border)', color: 'inherit' }}><ArrowUpRight size={16} /></button>
+              <button style={{ padding: '0.625rem', cursor: 'pointer', borderRadius: '0.5rem', background: 'var(--glass)', border: '1px solid var(--card-border)', color: 'inherit' }}><Filter size={16} /></button>
+              <button style={{ padding: '0.625rem', cursor: 'pointer', borderRadius: '0.5rem', background: 'var(--glass)', border: '1px solid var(--card-border)', color: 'inherit' }}><ArrowUpRight size={16} /></button>
             </div>
           </div>
 
@@ -585,7 +659,7 @@ export default function AssetLedger() {
                     <Td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.875rem', color: 'rgba(99, 102, 241, 0.8)' }}>{item.id}</Td>
                     <Td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        <div style={{ width: '2rem', height: '2rem', borderRadius: '0.5rem', background: 'var(--glass)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.75rem', border: '1px solid var(--card-border)' }}>
+                        <div style={{ width: '2.5rem', height: '2.5rem', borderRadius: '0.5rem', background: 'var(--background)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.65rem', border: '1px solid var(--card-border)', color: 'var(--foreground)' }}>
                           {item.symbol}
                         </div>
                         <span style={{ fontWeight: 500 }}>{item.name}</span>
@@ -611,7 +685,7 @@ export default function AssetLedger() {
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <SpinnerWrapper>
                     <RefreshCw size={12} />
-                  </SpinnerWrapper> 
+                  </SpinnerWrapper>
                   Syncing more records...
                 </div>
               )}

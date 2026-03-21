@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Global Asset Ledger | High-Performance Data System",
-  description: "A professional-grade ledger for massive datasets with instantaneous performance and rich aesthetics.",
+  title: "Global Asset Ledger",
+  description: "A professional-grade ledger for massive datasets with instantaneous performance",
 };
 
 export default function RootLayout({
