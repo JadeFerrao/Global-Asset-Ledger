@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo, useEffect, useCallback, useRef, useDeferredValue } from "react";
+import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import styled, { keyframes } from "styled-components";
 import {
   Search,
@@ -143,6 +143,41 @@ const SearchInput = styled.input`
   &:focus {
     border-color: var(--primary);
     box-shadow: 0 0 0 2px var(--primary-glow);
+  }
+`;
+
+const StyledSelect = styled.select`
+  width: 100%;
+  padding: 0.875rem 1.25rem;
+  border-radius: 0.75rem;
+  background: var(--glass);
+  border: 1px solid var(--card-border);
+  color: var(--foreground);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 1rem center;
+  background-size: 1rem;
+  transition: all 0.2s ease;
+
+  &:hover {
+    background: rgba(99, 102, 241, 0.05);
+    border-color: rgba(99, 102, 241, 0.4);
+  }
+
+  &:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px var(--primary-glow);
+  }
+
+  option {
+    background: var(--background);
+    color: var(--foreground);
+    padding: 1rem;
   }
 `;
 
@@ -333,6 +368,7 @@ interface AssetData {
   change: string;
   volume: string;
   region: string;
+  iconUrl?: string;
 }
 
 interface StatCardProps {
@@ -367,15 +403,27 @@ export default function AssetLedger() {
   const [rawData, setRawData] = useState<AssetData[]>([]);
   const [isFetching, setIsFetching] = useState(true);
 
+  const [inputValue, setInputValue] = useState("");
   const [search, setSearch] = useState("");
-  // useDeferredValue keeps the UI responsive while typing, only applying the filter once typing naturally pauses
-  const deferredSearch = useDeferredValue(search);
+
+  // Debounce the search input for optimization
+  // the search value (and thus intensive filtering or API calls) only updates when the user stops typing
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setSearch(inputValue);
+    }, 500);
+    return () => clearTimeout(handler);
+  }, [inputValue]);
+
+  const [regionFilter, setRegionFilter] = useState("All");
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(50);
   const [isLoading, setIsLoading] = useState(false);
 
   const [isOnline, setIsOnline] = useState(true);
+  const [isWsConnected, setIsWsConnected] = useState(false);
+  const [livePrices, setLivePrices] = useState<Record<string, string>>({});
   const [stats, setStats] = useState({ volume: "$0", latency: "0ms" });
 
   useEffect(() => {
@@ -397,8 +445,8 @@ export default function AssetLedger() {
     if (!isMounted) return;
 
     const startTime = performance.now();
-    // Fetch Binance 24hr Ticker API
-    fetch("https://api.binance.com/api/v3/ticker/24hr")
+    // Fetch CoinGecko API (natively supports high-res icons and massive multi-asset market sweeps which Coinbase lacks)
+    fetch("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=1&sparkline=false")
       .then(res => res.json())
       .then((data: any[]) => {
         const endTime = performance.now();
@@ -406,54 +454,69 @@ export default function AssetLedger() {
         let totalVolume = 0;
 
         const formatted = data.map((item) => {
-          totalVolume += Number(item.quoteVolume || 0);
-
-          let baseAsset = item.symbol;
-          const quotes = ["USDT", "BUSD", "USDC", "TRY", "EUR", "BTC", "ETH", "BNB"];
-          for (const quote of quotes) {
-            if (item.symbol.endsWith(quote)) {
-              baseAsset = item.symbol.substring(0, item.symbol.length - quote.length);
-              break;
-            }
-          }
+          totalVolume += Number(item.total_volume || 0);
 
           return {
-            id: item.symbol,
-            name: item.symbol,
-            symbol: baseAsset,
-            value: Number(item.lastPrice).toFixed(4),
-            change: Number(item.priceChangePercent).toFixed(2),
-            volume: Number(item.volume).toFixed(0),
+            id: item.id,
+            name: item.name,
+            symbol: item.symbol.toUpperCase(),
+            value: Number(item.current_price).toFixed(2),
+            change: Number(item.price_change_percentage_24h).toFixed(2),
+            volume: Number(item.total_volume).toFixed(0),
             region: ["Global", "APAC", "EMEA", "AMER"][Math.floor(Math.random() * 4)],
+            iconUrl: item.image,
           };
         });
 
         let volumeStr = totalVolume > 1e9 ? `$${(totalVolume / 1e9).toFixed(2)}B` : `$${(totalVolume / 1e6).toFixed(2)}M`;
         setStats({ volume: volumeStr, latency: `${fetchLatency}ms` });
 
-        formatted.sort((a, b) => Number(b.volume) - Number(a.volume));
-
         setRawData(formatted);
         setIsFetching(false);
       })
       .catch(err => {
-        console.error("Failed to fetch Binance API", err);
+        console.error("Failed to fetch CoinGecko API", err);
         setIsFetching(false);
       });
+
+    // Establish genuine Live Feed WebSocket via CoinCap
+    const ws = new WebSocket('wss://ws.coincap.io/prices?assets=ALL');
+    ws.onopen = () => setIsWsConnected(true);
+    ws.onclose = () => setIsWsConnected(false);
+    ws.onerror = () => setIsWsConnected(false);
+
+    ws.onmessage = (msg) => {
+      try {
+        const liveData = JSON.parse(msg.data);
+        setLivePrices(prev => ({ ...prev, ...liveData }));
+      } catch (e) {
+        // Safe fail
+      }
+    };
+
+    return () => ws.close();
   }, [isMounted]);
 
   // High-Performance Filtering Strategy:
-  // We use useMemo + useDeferredValue to avoid freezing the UI on every keystroke
   const filteredData = useMemo(() => {
-    if (!deferredSearch) return rawData;
-    const lowerSearch = deferredSearch.toLowerCase();
-    return rawData.filter(
-      item =>
-        item.name.toLowerCase().includes(lowerSearch) ||
-        item.id.toLowerCase().includes(lowerSearch) ||
-        item.symbol.toLowerCase().includes(lowerSearch)
-    );
-  }, [deferredSearch, rawData]);
+    let result = rawData;
+
+    if (regionFilter !== "All") {
+      result = result.filter(item => item.region === regionFilter);
+    }
+
+    if (search) {
+      const lowerSearch = search.toLowerCase();
+      result = result.filter(
+        item =>
+          item.name.toLowerCase().includes(lowerSearch) ||
+          item.id.toLowerCase().includes(lowerSearch) ||
+          item.symbol.toLowerCase().includes(lowerSearch)
+      );
+    }
+
+    return result;
+  }, [search, regionFilter, rawData]);
 
   const displayedData = useMemo(() => {
     return filteredData.slice(0, visibleCount);
@@ -561,16 +624,16 @@ export default function AssetLedger() {
           </SearchIconWrapper>
           <SearchInput
             type="text"
-            placeholder="Search thousands of live pairs..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
           />
         </SearchContainer>
 
         <LiveFeedInfo>
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Live Feed</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-            {isOnline ? (
+            {isOnline && isWsConnected ? (
               <>
                 <PulseDot />
                 <span style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}>CONNECTED</span>
@@ -578,7 +641,7 @@ export default function AssetLedger() {
             ) : (
               <>
                 <span style={{ width: '0.5rem', height: '0.5rem', borderRadius: '50%', backgroundColor: '#ef4444' }}></span>
-                <span style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: '#ef4444' }}>OFFLINE</span>
+                <span style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: '#ef4444' }}>{isOnline ? 'CONNECTING...' : 'OFFLINE'}</span>
               </>
             )}
           </div>
@@ -595,16 +658,17 @@ export default function AssetLedger() {
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 <div>
-                  <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.5rem', display: 'block', textTransform: 'uppercase' }}>Universal Search</label>
-                  <SearchInput style={{ paddingLeft: '1rem' }} value={search} onChange={(e) => setSearch(e.target.value)} />
-                </div>
-                <div>
                   <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.5rem', display: 'block', textTransform: 'uppercase' }}>Region</label>
-                  <select style={{ width: '100%', padding: '0.75rem', borderRadius: '0.5rem', background: 'var(--glass)', border: '1px solid var(--card-border)', color: 'inherit' }}>
-                    <option>Global</option>
-                    <option>APAC</option>
-                    <option>EMEA</option>
-                  </select>
+                  <StyledSelect
+                    value={regionFilter}
+                    onChange={(e) => setRegionFilter(e.target.value)}
+                  >
+                    <option value="All">All Regions</option>
+                    <option value="Global">Global</option>
+                    <option value="APAC">APAC</option>
+                    <option value="EMEA">EMEA</option>
+                    <option value="AMER">AMER</option>
+                  </StyledSelect>
                 </div>
                 <button
                   style={{ width: '100%', padding: '1rem', background: 'var(--primary)', color: 'white', borderRadius: '0.75rem', marginTop: '1.5rem', fontWeight: 700, border: 'none', cursor: 'pointer' }}
@@ -636,8 +700,12 @@ export default function AssetLedger() {
               <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>Global ledger sync at {new Date().toLocaleTimeString()}</p>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button style={{ padding: '0.625rem', cursor: 'pointer', borderRadius: '0.5rem', background: 'var(--glass)', border: '1px solid var(--card-border)', color: 'inherit' }}><Filter size={16} /></button>
-              <button style={{ padding: '0.625rem', cursor: 'pointer', borderRadius: '0.5rem', background: 'var(--glass)', border: '1px solid var(--card-border)', color: 'inherit' }}><ArrowUpRight size={16} /></button>
+              <button
+                onClick={() => setIsSidebarOpen(true)}
+                style={{ padding: '0.625rem', cursor: 'pointer', borderRadius: '0.5rem', background: 'var(--glass)', border: '1px solid var(--card-border)', color: 'inherit' }}
+              >
+                <Filter size={16} />
+              </button>
             </div>
           </div>
 
@@ -650,7 +718,6 @@ export default function AssetLedger() {
                   <Th>Market Value</Th>
                   <Th style={{ textAlign: 'center' }}>24h Change</Th>
                   <Th>Region</Th>
-                  <Th></Th>
                 </tr>
               </TableHead>
               <tbody>
@@ -659,13 +726,23 @@ export default function AssetLedger() {
                     <Td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.875rem', color: 'rgba(99, 102, 241, 0.8)' }}>{item.id}</Td>
                     <Td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                        <div style={{ width: '2.5rem', height: '2.5rem', borderRadius: '0.5rem', background: 'var(--background)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.65rem', border: '1px solid var(--card-border)', color: 'var(--foreground)' }}>
-                          {item.symbol}
+                        <div style={{ width: '2.5rem', height: '2.5rem', borderRadius: '50%', background: 'var(--background)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.65rem', border: '1px solid var(--card-border)', color: 'var(--foreground)' }}>
+                          {item.iconUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={item.iconUrl} alt={item.symbol} style={{ width: '1.5rem', height: '1.5rem', borderRadius: '50%' }} />
+                          ) : (
+                            item.symbol
+                          )}
                         </div>
                         <span style={{ fontWeight: 500 }}>{item.name}</span>
                       </div>
                     </Td>
-                    <Td style={{ fontWeight: 500 }}>${Number(item.value).toLocaleString()}</Td>
+                    <Td style={{ fontWeight: 500 }}>
+                      ${livePrices[item.id]
+                        ? Number(livePrices[item.id]).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })
+                        : Number(item.value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })
+                      }
+                    </Td>
                     <Td style={{ textAlign: 'center' }}>
                       <ChangeBadge $negative={item.change.startsWith('-')}>
                         {item.change.startsWith('-') ? <ArrowDownRight size={12} /> : <ArrowUpRight size={12} />}
@@ -673,9 +750,6 @@ export default function AssetLedger() {
                       </ChangeBadge>
                     </Td>
                     <Td style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>{item.region}</Td>
-                    <Td>
-                      <button style={{ background: 'transparent', color: 'var(--text-muted)', border: 'none', cursor: 'pointer' }}><ChevronRight size={16} /></button>
-                    </Td>
                   </Tr>
                 ))}
               </tbody>
