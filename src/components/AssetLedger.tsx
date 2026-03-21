@@ -398,20 +398,45 @@ function StatCard({ icon, label, value, change }: StatCardProps) {
   );
 }
 
+// Helper: format raw CoinGecko item into AssetData
+function formatAsset(item: any): AssetData {
+  return {
+    id: item.id,
+    name: item.name,
+    symbol: item.symbol.toUpperCase(),
+    value: Number(item.current_price ?? 0).toFixed(2),
+    change: Number(item.price_change_percentage_24h ?? 0).toFixed(2),
+    volume: Number(item.total_volume ?? 0).toFixed(0),
+    region: ["Global", "APAC", "EMEA", "AMER"][Math.floor(Math.random() * 4)],
+    iconUrl: item.image,
+  };
+}
+
+function computeStats(data: AssetData[], latencyMs: number) {
+  let totalVolume = 0;
+  for (const item of data) {
+    totalVolume += Number(item.volume || 0);
+  }
+  const volumeStr = totalVolume > 1e9
+    ? `$${(totalVolume / 1e9).toFixed(2)}B`
+    : `$${(totalVolume / 1e6).toFixed(2)}M`;
+  return { volume: volumeStr, latency: `${latencyMs}ms` };
+}
+
 export default function AssetLedger() {
   const [isMounted, setIsMounted] = useState(false);
   const [rawData, setRawData] = useState<AssetData[]>([]);
   const [isFetching, setIsFetching] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const [inputValue, setInputValue] = useState("");
   const [search, setSearch] = useState("");
 
-  // Debounce the search input for optimization
-  // the search value (and thus intensive filtering or API calls) only updates when the user stops typing
+  // Debounce the search input
   useEffect(() => {
     const handler = setTimeout(() => {
       setSearch(inputValue);
-    }, 500);
+    }, 300);
     return () => clearTimeout(handler);
   }, [inputValue]);
 
@@ -419,13 +444,17 @@ export default function AssetLedger() {
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(50);
-  const [isLoading, setIsLoading] = useState(false);
 
   const [isOnline, setIsOnline] = useState(true);
   const [isWsConnected, setIsWsConnected] = useState(false);
   const [livePrices, setLivePrices] = useState<Record<string, string>>({});
   const [stats, setStats] = useState({ volume: "$0", latency: "0ms" });
 
+  // Refs for WebSocket to avoid stale closures
+  const wsRef = useRef<WebSocket | null>(null);
+  const wsConnectedRef = useRef(false);
+
+  // --- Mount + online/offline tracking ---
   useEffect(() => {
     setIsMounted(true);
     if (typeof window !== 'undefined') {
@@ -441,76 +470,132 @@ export default function AssetLedger() {
     }
   }, []);
 
+  // --- Progressive Data Fetching ---
+  // Step 1: Fetch first 50 assets immediately via server-side proxy
+  // Step 2: Then fetch remaining 950 assets in background
   useEffect(() => {
     if (!isMounted) return;
 
-    const fetchAllData = async () => {
-      const startTime = performance.now();
+    let cancelled = false;
+    const startTime = performance.now();
+
+    const fetchInitialBatch = async () => {
       try {
-        // Fetch CoinGecko API for top 1000 assets (4 pages of 250)
-        const pages = [1, 2, 3, 4];
-        const promises = pages.map(page => 
-          fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=${page}&sparkline=false`)
-            .then(res => {
-              if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-              return res.json();
-            })
-        );
-        
-        const results = await Promise.all(promises);
-        const data = results.flat(); // Combines all 4 pages into one array (up to 1000 items)
-        
-        const endTime = performance.now();
-        const fetchLatency = Math.round(endTime - startTime);
-        let totalVolume = 0;
+        // Fetch first page of 50 via our server-side proxy
+        const res = await fetch('/api/assets?page=1&per_page=50');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
 
-        const formatted = data.map((item: any) => {
-          totalVolume += Number(item.total_volume || 0);
+        if (cancelled) return;
 
-          return {
-            id: item.id,
-            name: item.name,
-            symbol: item.symbol.toUpperCase(),
-            value: Number(item.current_price).toFixed(2),
-            change: Number(item.price_change_percentage_24h).toFixed(2),
-            volume: Number(item.total_volume).toFixed(0),
-            region: ["Global", "APAC", "EMEA", "AMER"][Math.floor(Math.random() * 4)],
-            iconUrl: item.image,
-          };
-        });
-
-        let volumeStr = totalVolume > 1e9 ? `$${(totalVolume / 1e9).toFixed(2)}B` : `$${(totalVolume / 1e6).toFixed(2)}M`;
-        setStats({ volume: volumeStr, latency: `${fetchLatency}ms` });
+        const formatted = (json.data || []).map(formatAsset);
+        const latency = Math.round(performance.now() - startTime);
 
         setRawData(formatted);
-      } catch (err) {
-        console.error("Failed to fetch CoinGecko API pages", err);
-      } finally {
-        setIsFetching(false);
+        setStats(computeStats(formatted, latency));
+        setIsFetching(false); // Show UI immediately with first 50
+        setFetchError(null);
+
+        // Now fetch remaining pages in background
+        fetchRemainingBatches(formatted, startTime);
+      } catch (err: any) {
+        console.error("Failed to fetch initial assets", err);
+        if (!cancelled) {
+          setFetchError(err.message || "Failed to fetch assets");
+          setIsFetching(false);
+        }
       }
     };
 
-    fetchAllData();
-
-    // Establish genuine Live Feed WebSocket via CoinCap
-    const ws = new WebSocket('wss://ws.coincap.io/prices?assets=ALL');
-    ws.onopen = () => setIsWsConnected(true);
-    ws.onclose = () => setIsWsConnected(false);
-    ws.onerror = () => setIsWsConnected(false);
-
-    ws.onmessage = (msg) => {
+    const fetchRemainingBatches = async (initialData: AssetData[], startMs: number) => {
       try {
-        const liveData = JSON.parse(msg.data);
-        setLivePrices(prev => ({ ...prev, ...liveData }));
-      } catch (e) {
-        // Safe fail
+        // Fetch all 1000 assets from server-side proxy (uses caching + retry)
+        const res = await fetch('/api/assets?page=0');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+
+        if (cancelled) return;
+
+        const allFormatted = (json.data || []).map(formatAsset);
+        const latency = Math.round(performance.now() - startMs);
+
+        setRawData(allFormatted);
+        setStats(computeStats(allFormatted, latency));
+      } catch (err) {
+        console.error("Failed to fetch remaining assets (using initial batch)", err);
+        // Keep the initial data – the user can already see 50 assets
       }
     };
 
-    return () => ws.close();
+    fetchInitialBatch();
+
+    return () => { cancelled = true; };
   }, [isMounted]);
 
-  // High-Performance Filtering Strategy:
+  // --- WebSocket Live Feed ---
+  useEffect(() => {
+    if (!isMounted) return;
+
+    let reconnectTimer: NodeJS.Timeout | null = null;
+
+    const connectWs = () => {
+      // Clean up previous
+      if (wsRef.current) {
+        wsRef.current.onopen = null;
+        wsRef.current.onclose = null;
+        wsRef.current.onerror = null;
+        wsRef.current.onmessage = null;
+        try { wsRef.current.close(); } catch (_) {}
+      }
+
+      const ws = new WebSocket('wss://ws.coincap.io/prices?assets=ALL');
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        wsConnectedRef.current = true;
+        setIsWsConnected(true);
+      };
+
+      ws.onclose = () => {
+        wsConnectedRef.current = false;
+        setIsWsConnected(false);
+        // Auto-reconnect after 5 seconds
+        reconnectTimer = setTimeout(connectWs, 5000);
+      };
+
+      ws.onerror = () => {
+        wsConnectedRef.current = false;
+        setIsWsConnected(false);
+      };
+
+      ws.onmessage = (msg) => {
+        try {
+          const liveData = JSON.parse(msg.data);
+          setLivePrices(prev => ({ ...prev, ...liveData }));
+        } catch (_) {
+          // Safe fail
+        }
+      };
+    };
+
+    connectWs();
+
+    return () => {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (wsRef.current) {
+        wsRef.current.onopen = null;
+        wsRef.current.onclose = null;
+        wsRef.current.onerror = null;
+        wsRef.current.onmessage = null;
+        try { wsRef.current.close(); } catch (_) {}
+        wsRef.current = null;
+      }
+      wsConnectedRef.current = false;
+      setIsWsConnected(false);
+    };
+  }, [isMounted]);
+
+  // --- High-Performance Filtering ---
   const filteredData = useMemo(() => {
     let result = rawData;
 
@@ -531,39 +616,40 @@ export default function AssetLedger() {
     return result;
   }, [search, regionFilter, rawData]);
 
+  // Reset visible count when filters change
+  useEffect(() => {
+    setVisibleCount(50);
+  }, [search, regionFilter]);
+
   const displayedData = useMemo(() => {
     return filteredData.slice(0, visibleCount);
   }, [filteredData, visibleCount]);
 
-  // Performance Strategy: Infinite Scroll / Virtualization
-  // We render a slice of the data and use IntersectionObserver to load more.
+  // --- Infinite Scroll via IntersectionObserver ---
+  // Data is already in memory, so loading more is just an array slice — no delay needed.
   const observerTarget = useRef<HTMLDivElement>(null);
 
+  const loadMore = useCallback(() => {
+    setVisibleCount(prev => Math.min(prev + 50, filteredData.length));
+  }, [filteredData.length]);
+
   useEffect(() => {
+    const currentTarget = observerTarget.current;
+    if (!currentTarget) return;
+
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && !isLoading && visibleCount < filteredData.length) {
+        if (entries[0].isIntersecting && visibleCount < filteredData.length) {
           loadMore();
         }
       },
-      { threshold: 0.1 }
+      { threshold: 0.1, rootMargin: '400px' }
     );
 
-    if (observerTarget.current) {
-      observer.observe(observerTarget.current);
-    }
+    observer.observe(currentTarget);
 
     return () => observer.disconnect();
-  }, [visibleCount, filteredData.length, isLoading]);
-
-  const loadMore = useCallback(() => {
-    setIsLoading(true);
-    // Simulate network delay for "massive API" feel
-    setTimeout(() => {
-      setVisibleCount(prev => prev + 50);
-      setIsLoading(false);
-    }, 400);
-  }, []);
+  }, [visibleCount, filteredData.length, loadMore]);
 
   if (!isMounted || isFetching) {
     return (
@@ -614,6 +700,55 @@ export default function AssetLedger() {
               ))}
             </div>
           </LedgerSection>
+        </MainContent>
+      </Container>
+    );
+  }
+
+  if (fetchError && rawData.length === 0) {
+    return (
+      <Container>
+        <Header>
+          <LogoContainer>
+            <LogoIcon>
+              <Globe className="w-6 h-6 text-white" size={24} color="white" />
+            </LogoIcon>
+            <Title>
+              Asset<span style={{ color: 'var(--primary)' }}>Ledger</span>
+            </Title>
+          </LogoContainer>
+        </Header>
+        <MainContent>
+          <GlassCard style={{ textAlign: 'center', padding: '3rem 2rem' }}>
+            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⚠️</div>
+            <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '0.5rem' }}>
+              Failed to Load Assets
+            </h2>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginBottom: '1.5rem' }}>
+              {fetchError}
+            </p>
+            <button
+              onClick={() => {
+                setFetchError(null);
+                setIsFetching(true);
+                // Re-trigger mount effect
+                setIsMounted(false);
+                setTimeout(() => setIsMounted(true), 50);
+              }}
+              style={{
+                padding: '0.75rem 2rem',
+                background: 'var(--primary)',
+                color: 'white',
+                borderRadius: '0.75rem',
+                fontWeight: 600,
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '0.875rem'
+              }}
+            >
+              Retry
+            </button>
+          </GlassCard>
         </MainContent>
       </Container>
     );
@@ -767,15 +902,19 @@ export default function AssetLedger() {
                 ))}
               </tbody>
             </StyledTable>
-            <div ref={observerTarget} style={{ height: '5rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {visibleCount < filteredData.length && (
+            <div ref={observerTarget} style={{ height: '4rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {visibleCount < filteredData.length ? (
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <SpinnerWrapper>
                     <RefreshCw size={12} />
                   </SpinnerWrapper>
-                  Syncing more records...
+                  Syncing more records... ({displayedData.length} of {filteredData.length.toLocaleString()})
                 </div>
-              )}
+              ) : filteredData.length > 0 ? (
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  All {filteredData.length.toLocaleString()} records loaded
+                </div>
+              ) : null}
             </div>
           </TableContainer>
         </LedgerSection>
