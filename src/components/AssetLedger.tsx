@@ -444,16 +444,27 @@ export default function AssetLedger() {
   useEffect(() => {
     if (!isMounted) return;
 
-    const startTime = performance.now();
-    // Fetch CoinGecko API (natively supports high-res icons and massive multi-asset market sweeps which Coinbase lacks)
-    fetch("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=1&sparkline=false")
-      .then(res => res.json())
-      .then((data: any[]) => {
+    const fetchAllData = async () => {
+      const startTime = performance.now();
+      try {
+        // Fetch CoinGecko API for top 1000 assets (4 pages of 250)
+        const pages = [1, 2, 3, 4];
+        const promises = pages.map(page => 
+          fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=${page}&sparkline=false`)
+            .then(res => {
+              if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+              return res.json();
+            })
+        );
+        
+        const results = await Promise.all(promises);
+        const data = results.flat(); // Combines all 4 pages into one array (up to 1000 items)
+        
         const endTime = performance.now();
         const fetchLatency = Math.round(endTime - startTime);
         let totalVolume = 0;
 
-        const formatted = data.map((item) => {
+        const formatted = data.map((item: any) => {
           totalVolume += Number(item.total_volume || 0);
 
           return {
@@ -472,12 +483,14 @@ export default function AssetLedger() {
         setStats({ volume: volumeStr, latency: `${fetchLatency}ms` });
 
         setRawData(formatted);
+      } catch (err) {
+        console.error("Failed to fetch CoinGecko API pages", err);
+      } finally {
         setIsFetching(false);
-      })
-      .catch(err => {
-        console.error("Failed to fetch CoinGecko API", err);
-        setIsFetching(false);
-      });
+      }
+    };
+
+    fetchAllData();
 
     // Establish genuine Live Feed WebSocket via CoinCap
     const ws = new WebSocket('wss://ws.coincap.io/prices?assets=ALL');
