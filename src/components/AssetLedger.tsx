@@ -15,6 +15,7 @@ import {
   X,
   RefreshCw
 } from "lucide-react";
+import AssetAgent from "./AssetAgent";
 
 // --- Animations ---
 const fadeIn = keyframes`
@@ -919,6 +920,7 @@ export default function AssetLedger() {
           </TableContainer>
         </LedgerSection>
       </MainContent>
+      <AssetAgent ledgerData={rawData} />
     </Container>
   );
 }
